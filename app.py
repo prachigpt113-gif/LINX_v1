@@ -379,11 +379,12 @@ if st.session_state.step == "show":
 # ============================================================
 # FOOTER (always visible)
 # ============================================================
-with st.sidebar:
-    st.divider()
+
+st.divider()
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
     st.caption(
         "Built by [Prachi Gupta](https://www.linkedin.com/in/prachi-gupta3/) · "
         "[The research behind it](https://medium.com/@prachigpt113/lost-in-the-learning-loop-91669eed5cb3) · "
-        "[Code](https://github.com/prachigpt113-gif/linx_v1)"
-    )
+        "[Code](https://github.com/prachigpt113-gif/linx_v1)")
 
