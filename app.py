@@ -1,33 +1,39 @@
 import streamlit as st
 import pandas as pd
-
 import requests
 
+# ============================================================
+# LOGGING (Google Form -> Sheet)
+# ============================================================
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScm5vJ8ZSAsLLyQE49dsAyAFjSDINvTSco8w1mPeijjMa2ezg/formResponse"
 
 def log_event(event, email=""):
-    """Fire-and-forget log to Google Form -> Sheet."""
     try:
         requests.post(FORM_URL, data={
-            "entry.1040702399": event,                                    # event
-            "entry.1408930542": str(st.session_state.get("current_field") or ""),   # field
-            "entry.370929055":  str(st.session_state.get("current_level", "")),   # level
-            "entry.194776135":  str(st.session_state.get("intent", "")),          # archetype
-            "entry.198758842":  email,                                    # email
+            "entry.1040702399": event,
+            "entry.1408930542": str(st.session_state.get("current_field") or ""),
+            "entry.370929055":  str(st.session_state.get("current_level") or ""),
+            "entry.194776135":  str(st.session_state.get("intent") or ""),
+            "entry.198758842":  email,
         }, timeout=3)
     except Exception:
-        pass   # never let logging break the app
+        pass
 
 
 # ============================================================
 # SECTION 1: SETUP
 # ============================================================
-# st.title("Let's ship LINX!")
+st.set_page_config(page_title="LINX", page_icon="🎯")
 
-df = pd.read_csv('linx_catalog_merged.csv')   # <-- use your cleaned (dead-links-removed) file
+df = pd.read_csv('linx_catalog_merged.csv')
 
 st.markdown("""
 <style>
+    /* hide streamlit chrome (Fork / GitHub / menu) */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+
     /* dark canvas */
     .stApp { background-color: #0b0e14; color: #eef2f6; }
 
@@ -55,17 +61,16 @@ st.markdown("""
         color: white;
     }
 
-    /* course card look on the recommendation blocks */
     h3 { color: #eaf1fc !important; }
 
-    /* the coursera link button */
     .stLinkButton > a {
         background-color: #2f405b !important;
         border-radius: 60px !important;
         color: white !important;
         border: none !important;
     }
-        /* user messages right-aligned */
+
+    /* user messages right-aligned */
     .stChatMessage:has(img[alt="user avatar"]) {
         flex-direction: row-reverse;
         background-color: #2b3b52 !important;
@@ -75,27 +80,22 @@ st.markdown("""
 
 
 def clean_number(value):
-    """'18K' -> 18000, '258,931' -> 258931, '910' -> 910"""
     text = str(value).replace(",", "")
     if "K" in text:
         return float(text.replace("K", "")) * 1000
     return float(text)
 
-
-df["reviews"] = df["reviews"].apply(clean_number)
+df["reviews"]  = df["reviews"].apply(clean_number)
 df["enrolled"] = df["enrolled"].apply(clean_number)
 
-# level ladders
-next_level = {"Beginner": "Intermediate", "Intermediate": "Advanced", "Advanced": "Advanced"}
+next_level   = {"Beginner": "Intermediate", "Intermediate": "Advanced", "Advanced": "Advanced"}
 beyond_level = {"Beginner": "Advanced", "Intermediate": "Advanced", "Advanced": "Advanced"}
 
-AVATAR_LINX = "Linx_logo.png"   # your logo file in the same folder
+AVATAR_LINX = "Linx_logo.png"
 AVATAR_USER = "user.png"
 
 
-# ---------- keyword extraction ----------
 def extract_keywords(field):
-    """'I'm in data analytics field' -> ['data', 'analytics']"""
     stopwords = ['i', "i'm", 'im', 'am', 'in', 'the', 'a', 'an', 'of', 'for', 'on', 'at',
                  'to', 'from', 'by', 'with', 'field', 'role', 'work', 'job', 'currently',
                  'working', 'want', 'become', 'get', 'better']
@@ -103,9 +103,8 @@ def extract_keywords(field):
     return [w for w in words if w not in stopwords and len(w) >= 2]
 
 
-# ---------- does a course match the field? (word-level, not sloppy substring) ----------
 def field_matches(skills_text, keywords):
-    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]   # ← only primary skills
+    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
     return any(
         kw in skill.split() or skill.startswith(kw)
         for skill in skills
@@ -113,21 +112,18 @@ def field_matches(skills_text, keywords):
     )
 
 
-# ---------- the recommender engine (honest: never fakes a match) ----------
 def recommend(field, level):
     keywords = extract_keywords(field)
     if not keywords:
         st.warning("Tell me a field in a word or two — like 'finance' or 'design'.")
         return
 
-    target  = level                    # courses AT their level
-    stretch = next_level[level]        # one above
+    target  = level
+    stretch = next_level[level]
 
-    # every course that genuinely matches the field, ANY level
     mask = df["Skills"].apply(lambda s: field_matches(s, keywords))
     field_pool = df[mask]
 
-    # HONEST GUARD: field not in catalog -> say so, do NOT substitute random courses
     if len(field_pool) == 0:
         st.info(
             f"I don't have strong **{field}** courses in my catalog yet — "
@@ -135,18 +131,15 @@ def recommend(field, level):
         )
         return
 
-    # ideal mix: 2 at target level + 1 at stretch level
     two_at = field_pool[field_pool["Difficulty"] == target].sort_values("enrolled", ascending=False).head(2)
     one_up = field_pool[field_pool["Difficulty"] == stretch].sort_values("enrolled", ascending=False).head(1)
     final3 = pd.concat([two_at, one_up]).drop_duplicates(subset=["url"])
 
-    # widen ONLY within the field if short (keep the field, relax the level)
     if len(final3) < 3:
         already = final3["url"].tolist()
         extra = field_pool[~field_pool["url"].isin(already)].sort_values("enrolled", ascending=False).head(3 - len(final3))
         final3 = pd.concat([final3, extra])
 
-    # render cards
     for _, course in final3.iterrows():
         st.subheader(course["Title"])
         st.caption(f"{course['Organization']} · {course['Difficulty']} · {course['Duration']}")
@@ -158,7 +151,7 @@ def recommend(field, level):
         else:
             why = f"And this one's a reach — it stretches your **{specific_skill}** further, for when you're ready."
         st.write(why)
-        st.link_button("Open on Coursera ↗", course["url"])
+        st.link_button("Open course ↗", course["url"])
         st.divider()
 
 
@@ -186,7 +179,7 @@ def add(role, text):
 
 
 # ============================================================
-# SECTION 3: RENDER CHAT HISTORY (every rerun)
+# SECTION 3: CHAT HISTORY
 # ============================================================
 for m in st.session_state.messages:
     with st.chat_message(m["role"], avatar=m["avatar"]):
@@ -194,10 +187,10 @@ for m in st.session_state.messages:
 
 
 # ============================================================
-# SECTION 4: THE FLOW (one step at a time)
+# SECTION 4: THE FLOW
 # ============================================================
 
-# --- welcome: greet + ask current field ---
+# --- welcome ---
 if st.session_state.step == "welcome":
     c1, c2 = st.columns([1, 4])
     with c1:
@@ -206,46 +199,42 @@ if st.session_state.step == "welcome":
         st.title("WELCOME TO LINX")
 
     st.markdown("### Most learning platforms ask *what skill do you want?*")
-    st.markdown("#### LINX asks a better question: *'Who are you becoming?'*")
-    
-    st.write("")  # spacer
-    
+    st.markdown("#### LINX asks a better question: ***'Who are you becoming?'***")
+    st.write("")
     st.markdown(
-        "Research on why people abandon courses found something interesting: "
-        "the top reason to abandon wasn't losing motivation towards it, rather it was **never being clear, "
-        "why that course mattered to them in the first place.**"
+        "Research on why people abandon courses found something interesting: the top reason to "
+        "abandon wasn't losing motivation towards it, rather it was **never being clear why that "
+        "course mattered to them in the first place.**"
     )
     st.markdown(
-    "So LINX starts with you ~ what you do now, where you're headed, and how urgently. "
-    "Then it recommends courses that fit **where you're actually going**, and tells you why each one earns your time."
+        "So LINX starts with you — what you do now, where you're headed, and how urgently. "
+        "Then it recommends courses that fit **where you're actually going**, and tells you why "
+        "each one earns your time."
     )
-    
     st.write("")
     st.caption("Three questions · About a minute · No sign-up")
     st.write("")
 
-    if st.button("Let's begin"):
+    if st.button("Let's begin", key="begin"):
         log_event("started")
-        add("assistant", "Hi — I'm LINX. Before we find you courses, tell me where you're starting from.")
+        add("assistant", "Hi — I'm LINX. Before we find your courses, tell me where you're starting from.")
         st.session_state.step = "field"
         st.rerun()
 
-
-
-# if st.session_state.step == "welcome":
-#     add("assistant", "Hi — I'm LINX. Before we find your courses, tell me where you're starting from.")
-#     st.session_state.step = "field"
-#     st.rerun()
-
 # --- current field (text) ---
 if st.session_state.step == "field":
-    cf = st.chat_input("What field or role are you in right now?")
-    if cf:
-        st.session_state.current_field = cf
-        add("user", cf)
-        add("assistant", f"Got it — {cf}. And how would you rate your level there?")
-        st.session_state.step = "current_level"
-        st.rerun()
+    cf = st.text_input(
+        "What field or role are you in right now?",
+        placeholder="e.g. marketing, design, data",
+        key="cf_in",
+    )
+    if st.button("Continue", key="cf_go"):
+        if cf:
+            st.session_state.current_field = cf
+            add("user", cf)
+            add("assistant", f"Got it — {cf}. And how would you rate your level there?")
+            st.session_state.step = "current_level"
+            st.rerun()
 
 # --- current level (buttons) ---
 if st.session_state.step == "current_level":
@@ -262,41 +251,56 @@ if st.session_state.step == "current_level":
 if st.session_state.step == "intent":
     st.caption("Your answer helps me recommend learning that fits where you're headed.")
     if st.button("Moving toward a specific role", key="i_decided"):
-        st.session_state.intent = "decided"; add("user", "Moving toward a specific role")
+        st.session_state.intent = "decided"
+        add("user", "Moving toward a specific role")
         log_event("intent_chosen")
         add("assistant", "Love it — what role are you moving toward?")
-        st.session_state.step = "target_role"; st.rerun()
+        st.session_state.step = "target_role"
+        st.rerun()
     if st.button("Get better at what I do", key="i_moving"):
-        st.session_state.intent = "moving"; add("user", "Get better at what I do")
+        st.session_state.intent = "moving"
+        add("user", "Get better at what I do")
         log_event("intent_chosen")
-        st.session_state.step = "show"; st.rerun()
+        st.session_state.step = "show"
+        st.rerun()
     if st.button("Still figuring out my direction", key="i_figuring"):
-        st.session_state.intent = "figuring"; add("user", "Still figuring out my direction")
+        st.session_state.intent = "figuring"
+        add("user", "Still figuring out my direction")
         log_event("intent_chosen")
         add("assistant", "Do you want to grow in the field you're already in?")
-        st.session_state.step = "figuring_fork"; st.rerun()
+        st.session_state.step = "figuring_fork"
+        st.rerun()
 
 # --- figuring fork ---
 if st.session_state.step == "figuring_fork":
     if st.button("Yes, same field", key="f_yes"):
-        st.session_state.intent = "moving"; add("user", "Yes, same field")
-        st.session_state.step = "show"; st.rerun()
+        st.session_state.intent = "moving"
+        add("user", "Yes, same field")
+        st.session_state.step = "show"
+        st.rerun()
     if st.button("No, I want to pivot", key="f_no"):
-        st.session_state.intent = "pivot"; add("user", "No, I want to pivot")
+        st.session_state.intent = "pivot"
+        add("user", "No, I want to pivot")
         add("assistant", "What field or role are you interested in moving toward?")
-        st.session_state.step = "pivot_field"; st.rerun()
+        st.session_state.step = "pivot_field"
+        st.rerun()
 
 # --- decided: target role (text) ---
 if st.session_state.step == "target_role":
-    tr = st.chat_input("What role are you moving toward?")
-    if tr:
-        st.session_state.target_role = tr
-        add("user", tr)
-        add("assistant", f"Great — what's your current level in {tr}?")
-        st.session_state.step = "target_level"
-        st.rerun()
+    tr = st.text_input(
+        "What role are you moving toward?",
+        placeholder="e.g. product manager, data scientist",
+        key="tr_in",
+    )
+    if st.button("Continue", key="tr_go"):
+        if tr:
+            st.session_state.target_role = tr
+            add("user", tr)
+            add("assistant", f"Great — what's your current level in {tr}?")
+            st.session_state.step = "target_level"
+            st.rerun()
 
-# --- decided: target level (buttons) — gates the recommendation ---
+# --- decided: target level (buttons) ---
 if st.session_state.step == "target_level":
     c1, c2, c3 = st.columns(3)
     for col, lvl in [(c1, "Beginner"), (c2, "Intermediate"), (c3, "Advanced")]:
@@ -308,26 +312,36 @@ if st.session_state.step == "target_level":
 
 # --- pivot: target field (text) ---
 if st.session_state.step == "pivot_field":
-    pf = st.chat_input("What field or role are you interested in moving toward?")
-    if pf:
-        st.session_state.pivot_field = pf
-        add("user", pf)
-        add("assistant", "What happens if you don't pursue this right now?")
-        st.session_state.step = "pivot_urgency"
-        st.rerun()
+    pf = st.text_input(
+        "What field or role are you interested in moving toward?",
+        placeholder="e.g. UX research, cloud, finance",
+        key="pf_in",
+    )
+    if st.button("Continue", key="pf_go"):
+        if pf:
+            st.session_state.pivot_field = pf
+            add("user", pf)
+            add("assistant", "What happens if you don't pursue this right now?")
+            st.session_state.step = "pivot_urgency"
+            st.rerun()
 
 # --- pivot: urgency (buttons) ---
 if st.session_state.step == "pivot_urgency":
     if st.button("I'd miss a real opportunity", key="u_search"):
-        st.session_state.urgency = "searching"; add("user", "I'd miss a real opportunity")
-        st.session_state.step = "show"; st.rerun()
+        st.session_state.urgency = "searching"
+        add("user", "I'd miss a real opportunity")
+        st.session_state.step = "show"
+        st.rerun()
     if st.button("Honestly, not much", key="u_drift1"):
-        st.session_state.urgency = "drifting"; add("user", "Honestly, not much")
-        st.session_state.step = "show"; st.rerun()
+        st.session_state.urgency = "drifting"
+        add("user", "Honestly, not much")
+        st.session_state.step = "show"
+        st.rerun()
     if st.button("I'm not sure", key="u_drift2"):
-        st.session_state.urgency = "drifting"; add("user", "I'm not sure")
-        st.session_state.step = "show"; st.rerun()
-
+        st.session_state.urgency = "drifting"
+        add("user", "I'm not sure")
+        st.session_state.step = "show"
+        st.rerun()
 
 
 # ============================================================
@@ -338,7 +352,6 @@ if st.session_state.step == "show":
         log_event("recommendations_shown")
         st.session_state.logged_recs = True
 
-    # --- the recommendations FIRST ---
     if st.session_state.intent == "moving":
         st.write(f"Nice — let's deepen your **{st.session_state.current_field}**.")
         recommend(st.session_state.current_field, st.session_state.current_level)
@@ -360,7 +373,7 @@ if st.session_state.step == "show":
         )
         recommend(st.session_state.current_field, st.session_state.current_level)
 
-    # --- THEN the email ask (after the courses) ---
+    # --- email ask (AFTER the courses) ---
     st.divider()
     st.write("Want to hear when LINX gets smarter? Drop your email — I'm building this in the open.")
     email = st.text_input("your@email.com", key="email_capture", label_visibility="collapsed")
@@ -370,21 +383,17 @@ if st.session_state.step == "show":
             st.success("Got it — thanks!")
 
     st.write("")
-    st.divider()
-    st.write("")
     if st.button("🔄 Start over", key="restart"):
         st.session_state.clear()
         st.rerun()
 
-# ============================================================
-# FOOTER (always visible)
-# ============================================================
 
+# ============================================================
+# FOOTER
+# ============================================================
 st.divider()
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.caption(
-        "Built by [Prachi Gupta](https://www.linkedin.com/in/prachi-gupta3/) · "
-        "[The research behind it](https://medium.com/@prachigpt113/lost-in-the-learning-loop-91669eed5cb3) · "
-        "[Code](https://github.com/prachigpt113-gif/linx_v1)")
-
+st.caption(
+    "Built by [Prachi Gupta](https://www.linkedin.com/in/prachi-gupta3/) · "
+    "[The research behind it](https://medium.com/@prachigpt113/lost-in-the-learning-loop-91669eed5cb3) · "
+    "[Code](https://github.com/prachigpt113-gif/linx)"
+)
