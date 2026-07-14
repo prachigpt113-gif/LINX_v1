@@ -75,6 +75,34 @@ st.markdown("""
         flex-direction: row-reverse;
         background-color: #2b3b52 !important;
     }
+
+    /* text inputs — make them visible on dark */
+    .stTextInput > div > div > input {
+        background-color: #1a2533 !important;
+        color: #ffffff !important;
+        border: 1px solid #3a4d66 !important;
+        border-radius: 12px !important;
+        padding: 12px 16px !important;
+        font-size: 16px !important;
+    }
+    .stTextInput > div > div > input::placeholder {
+        color: #7b8ba3 !important;
+    }
+    .stTextInput label {
+        color: #eef2f6 !important;
+        font-size: 16px !important;
+    }
+
+    /* chat message text — force readable */
+    [data-testid="stChatMessage"] p,
+    [data-testid="stChatMessage"] div {
+        color: #eef2f6 !important;
+    }
+
+    /* captions */
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: #9aafca !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
