@@ -309,7 +309,7 @@ if st.session_state.step == "figuring_fork":
     if st.button("No, I want to pivot", key="f_no"):
         st.session_state.intent = "pivot"
         add("user", "No, I want to pivot")
-        add("assistant", "What field or role are you interested in moving toward?")
+        add("assistant", "What field are you interested in moving towards?")
         st.session_state.step = "pivot_field"
         st.rerun()
 
