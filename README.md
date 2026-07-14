@@ -4,7 +4,7 @@
 
 Most learning platforms ask *"what skill do you want?"* — a question that assumes you already know who you're becoming. LINX asks a better one first.
 
-**[Try it live →](YOUR_STREAMLIT_URL_HERE)**
+**[Try it live →](https://linx-learning.streamlit.app/)**
 
 ---
 
