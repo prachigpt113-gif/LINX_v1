@@ -379,9 +379,11 @@ if st.session_state.step == "show":
 # ============================================================
 # FOOTER (always visible)
 # ============================================================
-st.divider()
-st.caption(
-    "Built by [Prachi Gupta](https://www.linkedin.com/in/prachi-gupta3/) · "
-    "[The research behind it](https://medium.com/@prachigpt113/lost-in-the-learning-loop-91669eed5cb3) · "
-    "[Code](https://github.com/prachigpt113-gif/linx_v1)"
-)
+with st.sidebar:
+    st.divider()
+    st.caption(
+        "Built by [Prachi Gupta](https://www.linkedin.com/in/prachi-gupta3/) · "
+        "[The research behind it](https://medium.com/@prachigpt113/lost-in-the-learning-loop-91669eed5cb3) · "
+        "[Code](https://github.com/prachigpt113-gif/linx_v1)"
+    )
+
