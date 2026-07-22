@@ -163,8 +163,11 @@ def recommend(field, level):
     target  = level
     stretch = next_level[level]
 
-    # 1. exact phrase — "product management" as one concept
-    field_pool = df[df["Skills"].apply(lambda s: phrase_in_skills(s, phrase))]
+   # 1. exact phrase for multi-word; strict word-match for single word
+    if len(keywords) > 1:
+        field_pool = df[df["Skills"].apply(lambda s: phrase_in_skills(s, phrase))]
+    else:
+        field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
 
     # 2. all keywords must be present
     if len(field_pool) == 0 and len(keywords) > 1:
