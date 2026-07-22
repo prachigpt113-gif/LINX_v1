@@ -173,8 +173,8 @@ def recommend(field, level):
     if len(field_pool) == 0 and len(keywords) > 1:
         field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
 
-    # 3. last resort — any keyword
-    if len(field_pool) == 0:
+     # 3. last resort — any keyword (single-word queries only)
+    if len(field_pool) == 0 and len(keywords) == 1:
         field_pool = df[df["Skills"].apply(lambda s: field_matches(s, keywords))]
 
     # 4. honest guard
@@ -201,9 +201,11 @@ def recommend(field, level):
         matching = [s for s in skills_list if any(kw in s.lower() for kw in keywords)]
         specific_skill = matching[0] if matching else skills_list[0]
         if course["Difficulty"] == target:
-            why = f"Because you're growing in **{field}**, this builds your **{specific_skill}** — a level up from where you are."
-        else:
+            why = f"Because you're growing in **{field}**, this builds your **{specific_skill}** — right at your level."
+        elif course["Difficulty"] == stretch:
             why = f"And this one's a reach — it stretches your **{specific_skill}** further, for when you're ready."
+        else:
+            why = f"The strongest **{field}** match I have — it builds your **{specific_skill}**, though it's pitched at {course['Difficulty']} level."
         st.write(why)
         st.link_button("Open course ↗", course["url"])
         st.divider()
