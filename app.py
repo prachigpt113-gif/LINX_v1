@@ -138,7 +138,20 @@ def field_matches(skills_text, keywords):
         for skill in skills
         for kw in keywords
     )
+    
+def phrase_in_skills(skills_text, phrase):
+    """Exact phrase anywhere in the skills — highest precision."""
+    skills = [s.strip().lower() for s in str(skills_text).split(",")]
+    return any(phrase in skill for skill in skills)
 
+
+def all_keywords_match(skills_text, keywords):
+    """Every keyword must appear in the primary skills."""
+    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
+    words = set()
+    for skill in skills:
+        words.update(skill.split())
+    return all(kw in words for kw in keywords)
 
 def recommend(field, level):
     keywords = extract_keywords(field)
@@ -146,12 +159,22 @@ def recommend(field, level):
         st.warning("Tell me a field in a word or two — like 'finance' or 'design'.")
         return
 
+    phrase  = " ".join(keywords)
     target  = level
     stretch = next_level[level]
 
-    mask = df["Skills"].apply(lambda s: field_matches(s, keywords))
-    field_pool = df[mask]
+    # 1. exact phrase — "product management" as one concept
+    field_pool = df[df["Skills"].apply(lambda s: phrase_in_skills(s, phrase))]
 
+    # 2. all keywords must be present
+    if len(field_pool) == 0 and len(keywords) > 1:
+        field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
+
+    # 3. last resort — any keyword
+    if len(field_pool) == 0:
+        field_pool = df[df["Skills"].apply(lambda s: field_matches(s, keywords))]
+
+    # 4. honest guard
     if len(field_pool) == 0:
         st.info(
             f"I don't have strong **{field}** courses in my catalog yet — "
