@@ -76,7 +76,7 @@ st.markdown("""
         background-color: #2b3b52 !important;
     }
 
-    /* text inputs — make them visible on dark */
+    /* text inputs — visible on dark */
     .stTextInput > div > div > input {
         background-color: #1a2533 !important;
         color: #ffffff !important;
@@ -93,7 +93,7 @@ st.markdown("""
         font-size: 16px !important;
     }
 
-    /* chat message text — force readable */
+    /* chat message text */
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] div {
         color: #eef2f6 !important;
@@ -116,14 +116,17 @@ def clean_number(value):
 df["reviews"]  = df["reviews"].apply(clean_number)
 df["enrolled"] = df["enrolled"].apply(clean_number)
 
-next_level   = {"Beginner": "Intermediate", "Intermediate": "Advanced", "Advanced": "Advanced"}
-beyond_level = {"Beginner": "Advanced", "Intermediate": "Advanced", "Advanced": "Advanced"}
+next_level = {"Beginner": "Intermediate", "Intermediate": "Advanced", "Advanced": "Advanced"}
 
 AVATAR_LINX = "Linx_logo.png"
 AVATAR_USER = "user.png"
 
 
+# ------------------------------------------------------------
+# MATCHING HELPERS (loosest at the bottom)
+# ------------------------------------------------------------
 def extract_keywords(field):
+    """'I'm in data analytics field' -> ['data', 'analytics']"""
     stopwords = ['i', "i'm", 'im', 'am', 'in', 'the', 'a', 'an', 'of', 'for', 'on', 'at',
                  'to', 'from', 'by', 'with', 'field', 'role', 'work', 'job', 'currently',
                  'working', 'want', 'become', 'get', 'better']
@@ -131,28 +134,34 @@ def extract_keywords(field):
     return [w for w in words if w not in stopwords and len(w) >= 2]
 
 
-def field_matches(skills_text, keywords):
-    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
-    return any(
-        kw in skill.split() or skill.startswith(kw)
-        for skill in skills
-        for kw in keywords
-    )
-    
 def phrase_in_skills(skills_text, phrase):
-    """Exact phrase anywhere in the skills — highest precision."""
+    """Exact phrase inside any skill — highest precision. Multi-word queries only."""
     skills = [s.strip().lower() for s in str(skills_text).split(",")]
     return any(phrase in skill for skill in skills)
 
 
 def all_keywords_match(skills_text, keywords):
-    """Every keyword must appear in the primary skills."""
+    """EVERY keyword must appear as a word in the primary (first 8) skills."""
     skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
     words = set()
     for skill in skills:
         words.update(skill.split())
     return all(kw in words for kw in keywords)
 
+
+def field_matches(skills_text, keywords):
+    """ANY keyword matches — loosest. Single-word queries only."""
+    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
+    return any(
+        kw in skill.split() or skill.startswith(kw)
+        for skill in skills
+        for kw in keywords
+    )
+
+
+# ------------------------------------------------------------
+# THE RECOMMENDER
+# ------------------------------------------------------------
 def recommend(field, level):
     keywords = extract_keywords(field)
     if not keywords:
@@ -163,21 +172,21 @@ def recommend(field, level):
     target  = level
     stretch = next_level[level]
 
-   # 1. exact phrase for multi-word; strict word-match for single word
+    # 1. exact phrase for multi-word; strict word-match for single word
     if len(keywords) > 1:
         field_pool = df[df["Skills"].apply(lambda s: phrase_in_skills(s, phrase))]
     else:
         field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
 
-    # 2. all keywords must be present
+    # 2. fall back to: all keywords present
     if len(field_pool) == 0 and len(keywords) > 1:
         field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
 
-     # 3. last resort — any keyword (single-word queries only)
+    # 3. last resort — any keyword (single-word queries only, or "planning" rescues everything)
     if len(field_pool) == 0 and len(keywords) == 1:
         field_pool = df[df["Skills"].apply(lambda s: field_matches(s, keywords))]
 
-    # 4. honest guard
+    # 4. HONEST GUARD — no real match, say so. Never substitute.
     if len(field_pool) == 0:
         st.info(
             f"I don't have strong **{field}** courses in my catalog yet — "
@@ -185,27 +194,42 @@ def recommend(field, level):
         )
         return
 
-    two_at = field_pool[field_pool["Difficulty"] == target].sort_values("enrolled", ascending=False).head(2)
-    one_up = field_pool[field_pool["Difficulty"] == stretch].sort_values("enrolled", ascending=False).head(1)
+    # 5. rank: title relevance first, then popularity
+    field_pool = field_pool.copy()
+    field_pool["title_hit"] = field_pool["Title"].str.lower().apply(
+        lambda t: sum(kw in t for kw in keywords)
+    )
+    field_pool = field_pool.sort_values(["title_hit", "enrolled"], ascending=False)
+
+    # 6. pick 2 at level + 1 stretch, backfill within the field if short
+    two_at = field_pool[field_pool["Difficulty"] == target].head(2)
+    one_up = field_pool[field_pool["Difficulty"] == stretch].head(1)
     final3 = pd.concat([two_at, one_up]).drop_duplicates(subset=["url"])
 
     if len(final3) < 3:
         already = final3["url"].tolist()
-        extra = field_pool[~field_pool["url"].isin(already)].sort_values("enrolled", ascending=False).head(3 - len(final3))
+        extra = field_pool[~field_pool["url"].isin(already)].head(3 - len(final3))
         final3 = pd.concat([final3, extra])
 
+    # 7. render cards
     for _, course in final3.iterrows():
         st.subheader(course["Title"])
         st.caption(f"{course['Organization']} · {course['Difficulty']} · {course['Duration']}")
+
         skills_list = [s.strip() for s in course["Skills"].split(",")]
         matching = [s for s in skills_list if any(kw in s.lower() for kw in keywords)]
         specific_skill = matching[0] if matching else skills_list[0]
+
         if course["Difficulty"] == target:
-            why = f"Because you're growing in **{field}**, this builds your **{specific_skill}** — right at your level."
+            why = (f"Because you're growing in **{field}**, this builds your "
+                   f"**{specific_skill}** — right at your level.")
         elif course["Difficulty"] == stretch:
-            why = f"And this one's a reach — it stretches your **{specific_skill}** further, for when you're ready."
+            why = (f"And this one's a reach — it stretches your **{specific_skill}** "
+                   f"further, for when you're ready.")
         else:
-            why = f"The strongest **{field}** match I have — it builds your **{specific_skill}**, though it's pitched at {course['Difficulty']} level."
+            why = (f"The strongest **{field}** match I have — it builds your "
+                   f"**{specific_skill}**, though it's pitched at {course['Difficulty']} level.")
+
         st.write(why)
         st.link_button("Open course ↗", course["url"])
         st.divider()
