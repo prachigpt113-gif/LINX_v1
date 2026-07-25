@@ -15,6 +15,7 @@ def log_event(event, email=""):
             "entry.370929055":  str(st.session_state.get("current_level") or ""),
             "entry.194776135":  str(st.session_state.get("intent") or ""),
             "entry.198758842":  email,
+            "entry.630036527": feedback,
         }, timeout=3)
     except Exception:
         pass
@@ -461,6 +462,23 @@ if st.session_state.step == "show":
         if email:
             log_event("email_captured", email=email)
             st.success("Got it — thanks!")
+
+    # --- feedback box ---
+    st.divider()
+    st.write("**One optional thing** — if anything worked, didn't, or felt off, I'd love to hear it.")
+    feedback = st.text_area(
+        "feedback",
+        placeholder="Your feedback will help in making LINX sharper (up to 500 words)…",
+        max_chars=3000,          # ~500 words
+        label_visibility="collapsed",
+        key="feedback_box",
+    )
+    if st.button("Send feedback", key="fb_btn"):
+        if feedback.strip():
+            log_event("feedback", feedback=feedback)
+            st.success("Got it — Thank you.")
+        else:
+            st.warning("Write a little something first!")
 
     st.write("")
     if st.button("🔄 Start over", key="restart"):
