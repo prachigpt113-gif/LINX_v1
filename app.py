@@ -455,9 +455,9 @@ if st.session_state.step == "show":
         recommend(st.session_state.current_field, st.session_state.current_level)
 
     # --- email ask (AFTER the courses) ---
-st.divider()
+    st.divider()
     if st.session_state.get("email_sent"):
-        st.success("You're on the list — thanks! 🙏")
+        st.success("You're on the list — thanks!")
     else:
         st.write("Want to hear when LINX gets smarter? Drop your email — I'm building this in the open.")
         email = st.text_input("your@email.com", key="email_capture", label_visibility="collapsed")
@@ -468,7 +468,7 @@ st.divider()
                 st.rerun()
             else:
                 st.warning("Enter an email first!")
-            
+                
     # --- feedback box ---
     st.divider()
     if st.session_state.get("feedback_sent"):
