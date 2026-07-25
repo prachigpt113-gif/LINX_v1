@@ -462,23 +462,28 @@ if st.session_state.step == "show":
         if email:
             log_event("email_captured", email=email)
             st.success("Got it — thanks!")
-
+            
     # --- feedback box ---
     st.divider()
-    st.write("**One optional thing** — if anything worked, didn't, or felt off, I'd love to hear it.")
-    feedback = st.text_area(
-        "feedback",
-        placeholder="Your feedback will help in making LINX sharper (up to 500 words)…",
-        max_chars=3000,          # ~500 words
-        label_visibility="collapsed",
-        key="feedback_box",
-    )
-    if st.button("Send feedback", key="fb_btn"):
-        if feedback.strip():
-            log_event("feedback", feedback=feedback)
-            st.success("Got it — Thank you.")
-        else:
-            st.warning("Write a little something first!")
+    if st.session_state.get("feedback_sent"):
+        st.success("Thanks for the feedback — it genuinely helps.")
+    else:
+        st.write("**One optional thing** — if anything worked, didn't, or felt off, I'd love to hear it.")
+        feedback = st.text_area(
+            "feedback",
+            placeholder="Your feedback (up to 500 words)",
+            max_chars=3000,
+            label_visibility="collapsed",
+            key="feedback_box",
+        )
+        if st.button("Send feedback", key="fb_btn"):
+            if feedback.strip():
+                log_event("feedback", feedback=feedback)
+                st.session_state.feedback_sent = True
+                st.rerun()
+            else:
+                st.warning("Write a little something first!")
+    
 
     st.write("")
     if st.button("🔄 Start over", key="restart"):
