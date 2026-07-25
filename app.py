@@ -7,7 +7,7 @@ import requests
 # ============================================================
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScm5vJ8ZSAsLLyQE49dsAyAFjSDINvTSco8w1mPeijjMa2ezg/formResponse"
 
-def log_event(event, email=""):
+def log_event(event, email="", feedback=""):
     try:
         requests.post(FORM_URL, data={
             "entry.1040702399": event,
