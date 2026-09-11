@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
+from fastembed import TextEmbedding
 
 # ============================================================
 # LOGGING (Google Form -> Sheet)
@@ -27,6 +29,47 @@ def log_event(event, email="", feedback=""):
 st.set_page_config(page_title="LINX", page_icon="🎯")
 
 df = pd.read_csv('linx_catalog_merged.csv')
+
+# ------------------------------------------------------------
+# SEMANTIC SEARCH SETUP
+# ------------------------------------------------------------
+# course_embeddings.npy is built once, offline, by build_embeddings.py.
+# Row i of that file corresponds to row i of THIS CSV, in the same order.
+# If you edit/reorder the CSV, re-run build_embeddings.py before running
+# the app again, or matches will be wrong without any error being thrown.
+MODEL_NAME = "BAAI/bge-small-en-v1.5"   # must match build_embeddings.py exactly
+
+# How close a query needs to be to a course to count as a real match.
+# 0.35 is a starting guess, not a validated number — tune it once you've
+# looked at real similarity scores across a handful of test queries.
+SIMILARITY_THRESHOLD = 0.70
+
+# Temporary — shows each course's similarity score under its caption so we
+# can see real numbers and pick a real threshold. Set to False once tuned.
+DEBUG_SHOW_SCORES = False
+
+
+@st.cache_resource
+def load_embedding_model():
+    return TextEmbedding(model_name=MODEL_NAME)
+
+
+@st.cache_data
+def load_course_embeddings():
+    return np.load("course_embeddings.npy")
+
+
+embed_model = load_embedding_model()
+course_embeddings = load_course_embeddings()
+
+if len(course_embeddings) != len(df):
+    st.error(
+        f"course_embeddings.npy has {len(course_embeddings)} rows but the "
+        f"catalog has {len(df)} rows. Re-run build_embeddings.py against "
+        f"this exact CSV before using the app."
+    )
+    st.stop()
+
 
 st.markdown("""
 <style>
@@ -124,7 +167,11 @@ AVATAR_USER = "user.png"
 
 
 # ------------------------------------------------------------
-# MATCHING HELPERS (loosest at the bottom)
+# extract_keywords kept — NOT used for matching anymore, only to pick
+# which skill word to highlight in the "why this fits" sentence below.
+# Matching itself is now semantic (see semantic_pool below), which
+# replaces phrase_in_skills / all_keywords_match / field_matches and
+# their three-tier fallback entirely.
 # ------------------------------------------------------------
 def extract_keywords(field):
     """'I'm in data analytics field' -> ['data', 'analytics']"""
@@ -135,29 +182,27 @@ def extract_keywords(field):
     return [w for w in words if w not in stopwords and len(w) >= 2]
 
 
-def phrase_in_skills(skills_text, phrase):
-    """Exact phrase inside any skill — highest precision. Multi-word queries only."""
-    skills = [s.strip().lower() for s in str(skills_text).split(",")]
-    return any(phrase in skill for skill in skills)
+def semantic_pool(field):
+    """
+    Embed the user's query, compare it against every course's saved
+    embedding, and return the courses that clear the honest-guard
+    threshold — ranked best match first.
 
+    Direct replacement for the old three-tier keyword fallback
+    (exact phrase -> all-keywords -> any-keyword). Understands that
+    "UX Design" and "User Experience Design" mean the same thing,
+    which keyword matching structurally could not.
+    """
+    query_vec = np.array(list(embed_model.embed([field])))[0]
 
-def all_keywords_match(skills_text, keywords):
-    """EVERY keyword must appear as a word in the primary (first 8) skills."""
-    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
-    words = set()
-    for skill in skills:
-        words.update(skill.split())
-    return all(kw in words for kw in keywords)
-
-
-def field_matches(skills_text, keywords):
-    """ANY keyword matches — loosest. Single-word queries only."""
-    skills = [s.strip().lower() for s in str(skills_text).split(",")][:8]
-    return any(
-        kw in skill.split() or skill.startswith(kw)
-        for skill in skills
-        for kw in keywords
+    similarities = course_embeddings @ query_vec / (
+        np.linalg.norm(course_embeddings, axis=1) * np.linalg.norm(query_vec)
     )
+
+    pool = df.copy()
+    pool["similarity"] = similarities
+    pool = pool[pool["similarity"] >= SIMILARITY_THRESHOLD]
+    return pool.sort_values("similarity", ascending=False)
 
 
 # ------------------------------------------------------------
@@ -169,25 +214,15 @@ def recommend(field, level):
         st.warning("Tell me a field in a word or two — like 'finance' or 'design'.")
         return
 
-    phrase  = " ".join(keywords)
     target  = level
     stretch = next_level[level]
 
-    # 1. exact phrase for multi-word; strict word-match for single word
-    if len(keywords) > 1:
-        field_pool = df[df["Skills"].apply(lambda s: phrase_in_skills(s, phrase))]
-    else:
-        field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
+    # semantic retrieval — replaces the old 3-tier keyword fallback
+    field_pool = semantic_pool(field)
 
-    # 2. fall back to: all keywords present
-    if len(field_pool) == 0 and len(keywords) > 1:
-        field_pool = df[df["Skills"].apply(lambda s: all_keywords_match(s, keywords))]
-
-    # 3. last resort — any keyword (single-word queries only, or "planning" rescues everything)
-    if len(field_pool) == 0 and len(keywords) == 1:
-        field_pool = df[df["Skills"].apply(lambda s: field_matches(s, keywords))]
-
-    # 4. HONEST GUARD — no real match, say so. Never substitute.
+    # HONEST GUARD — nothing was similar ENOUGH, say so. Never substitute.
+    # Same philosophy as before: the condition changed from "zero keyword
+    # matches" to "best match didn't clear the similarity bar".
     if len(field_pool) == 0:
         st.info(
             f"I don't have strong **{field}** courses in my catalog yet — "
@@ -195,14 +230,8 @@ def recommend(field, level):
         )
         return
 
-    # 5. rank: title relevance first, then popularity
-    field_pool = field_pool.copy()
-    field_pool["title_hit"] = field_pool["Title"].str.lower().apply(
-        lambda t: sum(kw in t for kw in keywords)
-    )
-    field_pool = field_pool.sort_values(["title_hit", "enrolled"], ascending=False)
-
-    # 6. pick 2 at level + 1 stretch, backfill within the field if short
+    # field_pool is already ranked by similarity (best match first) —
+    # pick 2 at level + 1 stretch, backfill within the field if short
     two_at = field_pool[field_pool["Difficulty"] == target].head(2)
     one_up = field_pool[field_pool["Difficulty"] == stretch].head(1)
     final3 = pd.concat([two_at, one_up]).drop_duplicates(subset=["url"])
@@ -212,10 +241,12 @@ def recommend(field, level):
         extra = field_pool[~field_pool["url"].isin(already)].head(3 - len(final3))
         final3 = pd.concat([final3, extra])
 
-    # 7. render cards
+    # render cards
     for _, course in final3.iterrows():
         st.subheader(course["Title"])
         st.caption(f"{course['Organization']} · {course['Difficulty']} · {course['Duration']}")
+        if DEBUG_SHOW_SCORES and "similarity" in course:
+            st.caption(f"🔧 match score: {course['similarity']:.3f}")
 
         skills_list = [s.strip() for s in course["Skills"].split(",")]
         matching = [s for s in skills_list if any(kw in s.lower() for kw in keywords)]
@@ -468,7 +499,7 @@ if st.session_state.step == "show":
                 st.rerun()
             else:
                 st.warning("Enter an email first!")
-                
+
     # --- feedback box ---
     st.divider()
     if st.session_state.get("feedback_sent"):
@@ -489,7 +520,7 @@ if st.session_state.step == "show":
                 st.rerun()
             else:
                 st.warning("Write a little something first!")
-    
+
 
     st.write("")
     if st.button("🔄 Start over", key="restart"):
